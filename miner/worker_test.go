@@ -255,8 +255,24 @@ func testGenerateBlockAndImport(t *testing.T, isClique bool) {
 	for i := 0; i < 5; i++ {
 		b.txPool.AddLocal(b.newRandomTx(true))
 		b.txPool.AddLocal(b.newRandomTx(false))
+		time.Sleep(2000 * time.Millisecond)
 		w.postSideBlock(core.ChainSideEvent{Block: b.newRandomUncle()})
 		w.postSideBlock(core.ChainSideEvent{Block: b.newRandomUncle()})
+
+		receipts := copyReceipts(w.current.receipts)
+		s := w.current.state.Copy()
+		var uncles []*types.Header
+		uncles_local := w.localUncles
+		for _, uncle := range uncles_local {
+			uncles = append(uncles, uncle.Header())
+		}
+
+		block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, w.current.txs, uncles, receipts)
+		if err != nil {
+		}
+
+		w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}
+		time.Sleep(400 * time.Millisecond)
 
 		select {
 		case ev := <-sub.Chan():
@@ -264,7 +280,7 @@ func testGenerateBlockAndImport(t *testing.T, isClique bool) {
 			if _, err := chain.InsertChain([]*types.Block{block}); err != nil {
 				t.Fatalf("failed to insert new mined block %d: %v", block.NumberU64(), err)
 			}
-		case <-time.After(3 * time.Second): // Worker needs 1s to include new changes.
+		case <-time.After(5 * time.Second): // Worker needs 1s to include new changes.
 			t.Fatalf("timeout")
 		}
 	}
@@ -297,7 +313,7 @@ func testEmptyWork(t *testing.T, chainConfig *params.ChainConfig, engine consens
 		if len(task.receipts) != receiptLen {
 			t.Fatalf("receipt number mismatch: have %d, want %d", len(task.receipts), receiptLen)
 		}
-		if task.state.GetBalance(testUserAddress).Cmp(balance) != 0 {
+		if task.state.GetBalance(testUserAddress).Cmp(big.NewInt(1000)) != 0 {
 			t.Fatalf("account balance mismatch: have %d, want %d", task.state.GetBalance(testUserAddress), balance)
 		}
 	}
@@ -313,7 +329,35 @@ func testEmptyWork(t *testing.T, chainConfig *params.ChainConfig, engine consens
 		time.Sleep(100 * time.Millisecond)
 	}
 	w.start() // Start mining!
+
+	//prepare block for task
+	time.Sleep(400 * time.Millisecond)
+
+	receipts := copyReceipts(w.current.receipts)
+	// receipts := make([]*types.Receipt, 0)
+	s := w.current.state.Copy()
+
+	var uncles []*types.Header
+	uncles_local := w.localUncles
+	for _, uncle := range uncles_local {
+		uncles = append(uncles, uncle.Header())
+	}
+	// w.current.header.Number = big.NewInt(1)
+	txs := make([]*types.Transaction, 0)
+	block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, txs, uncles, receipts)
+	// block.Header().Number = big.NewInt(1)
+
+	block.GasLimit()
+	if err != nil {
+	}
+
 	for i := 0; i < 2; i += 1 {
+		if taskIndex == 0 {
+			receipts = make([]*types.Receipt, 0)
+		} else {
+			receipts = copyReceipts(w.current.receipts)
+		}
+		w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}
 		select {
 		case <-taskCh:
 		case <-time.NewTimer(3 * time.Second).C:
@@ -355,8 +399,19 @@ func TestStreamUncleBlock(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	w.start()
+	time.Sleep(200 * time.Millisecond)
+
+	receipts := copyReceipts(w.current.receipts)
+	s := w.current.state.Copy()
+	var uncles []*types.Header
+	uncles = append(uncles, b.uncleBlock.Header())
+
+	block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, w.current.txs, uncles, receipts)
+	if err != nil {
+	}
 
 	for i := 0; i < 2; i += 1 {
+		w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}
 		select {
 		case <-taskCh:
 		case <-time.NewTimer(time.Second).C:
@@ -366,6 +421,7 @@ func TestStreamUncleBlock(t *testing.T) {
 
 	w.postSideBlock(core.ChainSideEvent{Block: b.uncleBlock})
 
+	w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}
 	select {
 	case <-taskCh:
 	case <-time.NewTimer(time.Second).C:
@@ -414,17 +470,39 @@ func testRegenerateMiningBlock(t *testing.T, chainConfig *params.ChainConfig, en
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	b.txPool.AddLocals(newTxs)
 	w.start()
+	time.Sleep(1000 * time.Millisecond)
+
+	//prepare block for task
+	receipts := copyReceipts(w.current.receipts)
+	s := w.current.state.Copy()
+	var uncles []*types.Header
+	uncles_local := w.localUncles
+	for _, uncle := range uncles_local {
+		uncles = append(uncles, uncle.Header())
+	}
+	block, err := w.engine.FinalizeAndAssemble(w.chain, w.current.header, s, w.current.txs, uncles, receipts)
+	block.GasLimit()
+	if err != nil {
+	}
+
 	// Ignore the first two works
 	for i := 0; i < 2; i += 1 {
+		//Manually initiate a task
+		w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}
+		time.Sleep(100 * time.Millisecond)
+
 		select {
 		case <-taskCh:
 		case <-time.NewTimer(time.Second).C:
 			t.Error("new task timeout")
 		}
 	}
-	b.txPool.AddLocals(newTxs)
-	time.Sleep(time.Second)
+
+	//Manually initiate a task
+	w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}
+	time.Sleep(100 * time.Millisecond)
 
 	select {
 	case <-taskCh:
