@@ -18,6 +18,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/scroll-tech/go-ethereum/trie"
 	"math/big"
 
 	"github.com/scroll-tech/go-ethereum/common"
@@ -159,6 +160,28 @@ func (b *BlockGen) TxNonce(addr common.Address) uint64 {
 
 // AddUncle adds an uncle header to the generated block.
 func (b *BlockGen) AddUncle(h *types.Header) {
+	// The uncle will have the same timestamp and auto-generated difficulty
+	h.Time = b.header.Time
+
+	var parent *types.Header
+	for i := b.i - 1; i >= 0; i-- {
+		if b.chain[i].Hash() == h.ParentHash {
+			parent = b.chain[i].Header()
+			break
+		}
+	}
+	chainreader := &fakeChainReader{config: b.config}
+	h.Difficulty = b.engine.CalcDifficulty(chainreader, b.header.Time, parent)
+
+	// The gas limit and price should be derived from the parent
+	h.GasLimit = parent.GasLimit
+	if b.config.IsLondon(h.Number) {
+		h.BaseFee = misc.CalcBaseFee(b.config, parent)
+		if !b.config.IsLondon(parent.Number) {
+			parentGasLimit := parent.GasLimit * params.ElasticityMultiplier
+			h.GasLimit = CalcGasLimit(parentGasLimit, parentGasLimit)
+		}
+	}
 	b.uncles = append(b.uncles, h)
 }
 
@@ -185,6 +208,18 @@ func (b *BlockGen) OffsetTime(seconds int64) {
 	}
 	chainreader := &fakeChainReader{config: b.config}
 	b.header.Difficulty = b.engine.CalcDifficulty(chainreader, b.header.Time, b.parent.Header())
+}
+
+// GenerateChainWithGenesis is a wrapper of GenerateChain which will initialize
+// genesis block to database first according to the provided genesis specification
+// then generate chain on top.
+func GenerateChainWithGenesis(genesis *Genesis, engine consensus.Engine, db ethdb.Database, n int, gen func(int, *BlockGen)) (ethdb.Database, []*types.Block, []types.Receipts) {
+	gBlock, err := genesis.Commit(db)
+	if err != nil {
+		panic(err)
+	}
+	blocks, receipts := GenerateChain(genesis.Config, gBlock, engine, db, n, gen)
+	return db, blocks, receipts
 }
 
 // GenerateChain creates a chain of n blocks. The first block's
@@ -242,7 +277,9 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		return nil, nil
 	}
 	for i := 0; i < n; i++ {
-		statedb, err := state.New(parent.Root(), state.NewDatabase(db), nil)
+		statedb, err := state.New(parent.Root(), state.NewDatabaseWithConfig(db, &trie.Config{
+			Zktrie: config.Scroll.UseZktrie,
+		}), nil)
 		if err != nil {
 			panic(err)
 		}

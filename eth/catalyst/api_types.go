@@ -17,6 +17,8 @@
 package catalyst
 
 import (
+	"math/big"
+
 	"github.com/scroll-tech/go-ethereum/common"
 	"github.com/scroll-tech/go-ethereum/common/hexutil"
 )
@@ -32,6 +34,19 @@ type assembleBlockParams struct {
 // JSON type overrides for assembleBlockParams.
 type assembleBlockParamsMarshaling struct {
 	Timestamp hexutil.Uint64
+}
+
+//go:generate go run github.com/fjl/gencodec -type AssembleL2BlockParams -field-override assembleL2BlockParamsMarshaling -out gen_l2blockparams.go
+
+type AssembleL2BlockParams struct {
+	Number       uint64   `json:"number"        gencodec:"required"`
+	Transactions [][]byte `json:"transactions"`
+}
+
+// JSON type overrides for assembleL2BlockParams.
+type assembleL2BlockParamsMarshaling struct {
+	Number       hexutil.Uint64
+	Transactions []hexutil.Bytes
 }
 
 //go:generate go run github.com/fjl/gencodec -type executableData -field-override executableDataMarshaling -out gen_ed.go
@@ -61,10 +76,78 @@ type executableDataMarshaling struct {
 	Transactions []hexutil.Bytes
 }
 
-type newBlockResponse struct {
+type NewBlockResponse struct {
 	Valid bool `json:"valid"`
 }
 
-type genericResponse struct {
+type GenericResponse struct {
 	Success bool `json:"success"`
+}
+
+//go:generate go run github.com/fjl/gencodec -type ExecutableL2Data -field-override executableL2DataMarshaling -out gen_l2_ed.go
+
+type ExecutableL2Data struct {
+	// BLS message fields which need to be singed, and submitted to DA layer.
+	// We chose the fields which would affect the state calculation result,
+	// and the values are determined by sequencers as the BLS message.
+	ParentHash   common.Hash    `json:"parentHash"     gencodec:"required"`
+	Miner        common.Address `json:"miner"          gencodec:"required"`
+	Number       uint64         `json:"number"         gencodec:"required"`
+	GasLimit     uint64         `json:"gasLimit"       gencodec:"required"`
+	BaseFee      *big.Int       `json:"baseFeePerGas"`
+	Timestamp    uint64         `json:"timestamp"      gencodec:"required"`
+	Transactions [][]byte       `json:"transactions"   gencodec:"required"`
+
+	// execution result
+	StateRoot        common.Hash `json:"stateRoot"`
+	GasUsed          uint64      `json:"gasUsed"`
+	ReceiptRoot      common.Hash `json:"receiptsRoot"`
+	LogsBloom        []byte      `json:"logsBloom"`
+	WithdrawTrieRoot common.Hash `json:"withdrawTrieRoot"`
+
+	Hash common.Hash `json:"hash"` // cached value
+}
+
+// JSON type overrides for ExecutableL2Data.
+type executableL2DataMarshaling struct {
+	Number       hexutil.Uint64
+	GasLimit     hexutil.Uint64
+	GasUsed      hexutil.Uint64
+	Timestamp    hexutil.Uint64
+	LogsBloom    hexutil.Bytes
+	Transactions []hexutil.Bytes
+	BaseFee      *hexutil.Big
+}
+
+//go:generate go run github.com/fjl/gencodec -type SafeL2Data -field-override safeL2DataMarshaling -out gen_l2_sd.go
+
+// SafeL2Data is the block data which is approved in L1 and considered to be safe
+type SafeL2Data struct {
+	ParentHash   common.Hash `json:"parentHash"     gencodec:"required"`
+	Number       uint64      `json:"number"         gencodec:"required"`
+	GasLimit     uint64      `json:"gasLimit"       gencodec:"required"`
+	BaseFee      *big.Int    `json:"baseFeePerGas"  gencodec:"required"`
+	Timestamp    uint64      `json:"timestamp"      gencodec:"required"`
+	Transactions [][]byte    `json:"transactions"   gencodec:"required"`
+}
+
+// JSON type overrides for SafeL2Data.
+type safeL2DataMarshaling struct {
+	Number       hexutil.Uint64
+	GasLimit     hexutil.Uint64
+	Timestamp    hexutil.Uint64
+	Transactions []hexutil.Bytes
+	BaseFee      *hexutil.Big
+}
+
+//go:generate go run github.com/fjl/gencodec -type BLSData -field-override blsDataMarshaling -out gen_bls.go
+
+type BLSData struct {
+	BLSSigners   [][]byte `json:"bls_signers"`
+	BLSSignature []byte   `json:"bls_signature"`
+}
+
+type blsDataMarshaling struct {
+	BLSSigners   []hexutil.Bytes
+	BLSSignature hexutil.Bytes
 }

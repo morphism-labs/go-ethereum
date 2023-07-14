@@ -25,9 +25,7 @@ import (
 	"github.com/scroll-tech/go-ethereum/core/rawdb"
 	"github.com/scroll-tech/go-ethereum/core/types"
 	"github.com/scroll-tech/go-ethereum/crypto"
-	"github.com/scroll-tech/go-ethereum/crypto/codehash"
 	"github.com/scroll-tech/go-ethereum/ethdb"
-	"github.com/scroll-tech/go-ethereum/ethdb/memorydb"
 	"github.com/scroll-tech/go-ethereum/rlp"
 	"github.com/scroll-tech/go-ethereum/trie"
 )
@@ -64,7 +62,7 @@ func makeTestState() (Database, common.Hash, []*testAccount) {
 		}
 		if i%5 == 0 {
 			for j := byte(0); j < 5; j++ {
-				hash := codehash.KeccakCodeHash([]byte{i, i, i, i, i, j, j})
+				hash := crypto.Keccak256Hash([]byte{i, i, i, i, i, j, j})
 				obj.SetState(db, hash, hash)
 			}
 		}
@@ -135,7 +133,7 @@ func checkStateConsistency(db ethdb.Database, root common.Hash) error {
 // Tests that an empty state is not scheduled for syncing.
 func TestEmptyStateSync(t *testing.T) {
 	empty := common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
-	sync := NewStateSync(empty, rawdb.NewMemoryDatabase(), trie.NewSyncBloom(1, memorydb.New()), nil)
+	sync := NewStateSync(empty, rawdb.NewMemoryDatabase(), nil)
 	if nodes, paths, codes := sync.Missing(1); len(nodes) != 0 || len(paths) != 0 || len(codes) != 0 {
 		t.Errorf(" content requested for empty state: %v, %v, %v", nodes, paths, codes)
 	}
@@ -172,7 +170,7 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool) {
 
 	// Create a destination state and sync with the scheduler
 	dstDb := rawdb.NewMemoryDatabase()
-	sched := NewStateSync(srcRoot, dstDb, trie.NewSyncBloom(1, dstDb), nil)
+	sched := NewStateSync(srcRoot, dstDb, nil)
 
 	nodes, paths, codes := sched.Missing(count)
 	var (
@@ -251,7 +249,7 @@ func TestIterativeDelayedStateSync(t *testing.T) {
 
 	// Create a destination state and sync with the scheduler
 	dstDb := rawdb.NewMemoryDatabase()
-	sched := NewStateSync(srcRoot, dstDb, trie.NewSyncBloom(1, dstDb), nil)
+	sched := NewStateSync(srcRoot, dstDb, nil)
 
 	nodes, _, codes := sched.Missing(0)
 	queue := append(append([]common.Hash{}, nodes...), codes...)
@@ -299,7 +297,7 @@ func testIterativeRandomStateSync(t *testing.T, count int) {
 
 	// Create a destination state and sync with the scheduler
 	dstDb := rawdb.NewMemoryDatabase()
-	sched := NewStateSync(srcRoot, dstDb, trie.NewSyncBloom(1, dstDb), nil)
+	sched := NewStateSync(srcRoot, dstDb, nil)
 
 	queue := make(map[common.Hash]struct{})
 	nodes, _, codes := sched.Missing(count)
@@ -349,7 +347,7 @@ func TestIterativeRandomDelayedStateSync(t *testing.T) {
 
 	// Create a destination state and sync with the scheduler
 	dstDb := rawdb.NewMemoryDatabase()
-	sched := NewStateSync(srcRoot, dstDb, trie.NewSyncBloom(1, dstDb), nil)
+	sched := NewStateSync(srcRoot, dstDb, nil)
 
 	queue := make(map[common.Hash]struct{})
 	nodes, _, codes := sched.Missing(0)
@@ -408,7 +406,7 @@ func TestIncompleteStateSync(t *testing.T) {
 	var isCode = make(map[common.Hash]struct{})
 	for _, acc := range srcAccounts {
 		if len(acc.code) > 0 {
-			isCode[codehash.KeccakCodeHash(acc.code)] = struct{}{}
+			isCode[crypto.Keccak256Hash(acc.code)] = struct{}{}
 		}
 	}
 	isCode[common.BytesToHash(emptyKeccakCodeHash)] = struct{}{}
@@ -416,7 +414,7 @@ func TestIncompleteStateSync(t *testing.T) {
 
 	// Create a destination state and sync with the scheduler
 	dstDb := rawdb.NewMemoryDatabase()
-	sched := NewStateSync(srcRoot, dstDb, trie.NewSyncBloom(1, dstDb), nil)
+	sched := NewStateSync(srcRoot, dstDb, nil)
 
 	var added []common.Hash
 

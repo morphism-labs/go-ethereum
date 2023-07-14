@@ -33,7 +33,6 @@ import (
 	"github.com/scroll-tech/go-ethereum/accounts/scwallet"
 	"github.com/scroll-tech/go-ethereum/accounts/usbwallet"
 	"github.com/scroll-tech/go-ethereum/cmd/utils"
-	"github.com/scroll-tech/go-ethereum/eth/catalyst"
 	"github.com/scroll-tech/go-ethereum/eth/ethconfig"
 	"github.com/scroll-tech/go-ethereum/internal/debug"
 	"github.com/scroll-tech/go-ethereum/internal/ethapi"
@@ -161,17 +160,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 	if ctx.GlobalIsSet(utils.OverrideArrowGlacierFlag.Name) {
 		cfg.Eth.OverrideArrowGlacier = new(big.Int).SetUint64(ctx.GlobalUint64(utils.OverrideArrowGlacierFlag.Name))
 	}
-	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
-
-	// Configure catalyst.
-	if ctx.GlobalBool(utils.CatalystFlag.Name) {
-		if eth == nil {
-			utils.Fatalf("Catalyst does not work in light client mode.")
-		}
-		if err := catalyst.Register(stack, eth); err != nil {
-			utils.Fatalf("%v", err)
-		}
-	}
+	backend, _ := utils.RegisterEthService(stack, &cfg.Eth)
 
 	// Configure GraphQL if requested
 	if ctx.GlobalIsSet(utils.GraphQLEnabledFlag.Name) {

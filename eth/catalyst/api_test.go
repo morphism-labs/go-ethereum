@@ -244,6 +244,12 @@ func startEthService(t *testing.T, genesis *core.Genesis, blocks []*types.Block)
 		n.Close()
 		t.Fatal("can't import test blocks:", err)
 	}
+	for _, b := range blocks {
+		if _, err := ethservice.BlockChain().SetCanonical(b); err != nil {
+			n.Close()
+			t.Fatal("cannot set canonical: ", err)
+		}
+	}
 	ethservice.SetEtherbase(testAddr)
 
 	return n, ethservice

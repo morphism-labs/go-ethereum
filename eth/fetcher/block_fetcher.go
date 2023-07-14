@@ -26,6 +26,7 @@ import (
 	"github.com/scroll-tech/go-ethereum/common/prque"
 	"github.com/scroll-tech/go-ethereum/consensus"
 	"github.com/scroll-tech/go-ethereum/core/types"
+	"github.com/scroll-tech/go-ethereum/eth/protocols/eth"
 	"github.com/scroll-tech/go-ethereum/log"
 	"github.com/scroll-tech/go-ethereum/metrics"
 	"github.com/scroll-tech/go-ethereum/trie"
@@ -74,10 +75,10 @@ type HeaderRetrievalFn func(common.Hash) *types.Header
 type blockRetrievalFn func(common.Hash) *types.Block
 
 // headerRequesterFn is a callback type for sending a header retrieval request.
-type headerRequesterFn func(common.Hash) error
+type headerRequesterFn func(common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // bodyRequesterFn is a callback type for sending a body retrieval request.
-type bodyRequesterFn func([]common.Hash) error
+type bodyRequesterFn func([]common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // headerVerifierFn is a callback type to verify a block's header for fast propagation.
 type headerVerifierFn func(header *types.Header) error
@@ -461,15 +462,39 @@ func (f *BlockFetcher) loop() {
 
 				// Create a closure of the fetch and schedule in on a new thread
 				fetchHeader, hashes := f.fetching[hashes[0]].fetchHeader, hashes
-				go func() {
+				go func(peer string) {
 					if f.fetchingHook != nil {
 						f.fetchingHook(hashes)
 					}
 					for _, hash := range hashes {
 						headerFetchMeter.Mark(1)
-						fetchHeader(hash) // Suboptimal, but protocol doesn't allow batch header retrievals
+						go func(hash common.Hash) {
+							resCh := make(chan *eth.Response)
+
+							req, err := fetchHeader(hash, resCh)
+							if err != nil {
+								return // Legacy code, yolo
+							}
+							defer req.Close()
+
+							timeout := time.NewTimer(2 * fetchTimeout) // 2x leeway before dropping the peer
+							defer timeout.Stop()
+
+							select {
+							case res := <-resCh:
+								res.Done <- nil
+								f.FilterHeaders(peer, *res.Res.(*eth.BlockHeadersPacket), time.Now().Add(res.Time))
+
+							case <-timeout.C:
+								// The peer didn't respond in time. The request
+								// was already rescheduled at this point, we were
+								// waiting for a catchup. With an unresponsive
+								// peer however, it's a protocol violation.
+								f.dropPeer(peer)
+							}
+						}(hash)
 					}
-				}()
+				}(peer)
 			}
 			// Schedule the next fetch if blocks are still pending
 			f.rescheduleFetch(fetchTimer)
@@ -497,8 +522,36 @@ func (f *BlockFetcher) loop() {
 				if f.completingHook != nil {
 					f.completingHook(hashes)
 				}
+				fetchBodies := f.completing[hashes[0]].fetchBodies
 				bodyFetchMeter.Mark(int64(len(hashes)))
-				go f.completing[hashes[0]].fetchBodies(hashes)
+
+				go func(peer string, hashes []common.Hash) {
+					resCh := make(chan *eth.Response)
+
+					req, err := fetchBodies(hashes, resCh)
+					if err != nil {
+						return // Legacy code, yolo
+					}
+					defer req.Close()
+
+					timeout := time.NewTimer(2 * fetchTimeout) // 2x leeway before dropping the peer
+					defer timeout.Stop()
+
+					select {
+					case res := <-resCh:
+						res.Done <- nil
+
+						txs, uncles := res.Res.(*eth.BlockBodiesPacket).Unpack()
+						f.FilterBodies(peer, txs, uncles, time.Now())
+
+					case <-timeout.C:
+						// The peer didn't respond in time. The request
+						// was already rescheduled at this point, we were
+						// waiting for a catchup. With an unresponsive
+						// peer however, it's a protocol violation.
+						f.dropPeer(peer)
+					}
+				}(peer, hashes)
 			}
 			// Schedule the next fetch if blocks are still pending
 			f.rescheduleComplete(completeTimer)

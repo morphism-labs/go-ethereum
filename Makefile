@@ -52,3 +52,21 @@ devtools:
 	env GOBIN= go install ./cmd/abigen
 	@type "solc" 2> /dev/null || echo 'Please install solc'
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
+
+
+testnet-up:
+	docker-compose -f testnet/docker-compose.yml up  -d
+.PHONY: testnet-up
+
+testnet-down:
+	docker-compose -f testnet/docker-compose.yml down
+.PHONY: testnet-down
+
+testnet-clean:
+	docker-compose -f testnet/docker-compose.yml down
+	docker images -q morphism_geth:latest | xargs -r docker rmi
+	docker volume ls --filter "name=morph_data*" -q | xargs -r docker volume rm
+.PHONY: testnet-clean
+
+image:
+	docker build -f Dockerfile -t morphism-geth:latest .

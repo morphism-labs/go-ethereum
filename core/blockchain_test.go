@@ -1747,8 +1747,8 @@ func TestInsertReceiptChainRollback(t *testing.T) {
 // overtake the 'canon' chain until after it's passed canon by about 200 blocks.
 //
 // Details at:
-//  - https://github.com/scroll-tech/go-ethereum/issues/18977
-//  - https://github.com/scroll-tech/go-ethereum/pull/18988
+//   - https://github.com/scroll-tech/go-ethereum/issues/18977
+//   - https://github.com/scroll-tech/go-ethereum/pull/18988
 func TestLowDiffLongChain(t *testing.T) {
 	// Generate a canonical chain to act as the main dataset
 	engine := ethash.NewFaker()
@@ -1867,7 +1867,8 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 // That is: the sidechain for import contains some blocks already present in canon chain.
 // So the blocks are
 // [ Cn, Cn+1, Cc, Sn+3 ... Sm]
-//   ^    ^    ^  pruned
+//
+//	^    ^    ^  pruned
 func TestPrunedImportSide(t *testing.T) {
 	//glogger := log.NewGlogHandler(log.StreamHandler(os.Stdout, log.TerminalFormat(false)))
 	//glogger.Verbosity(3)
@@ -2272,7 +2273,7 @@ func TestTransactionIndices(t *testing.T) {
 	}
 }
 
-func TestSkipStaleTxIndicesInFastSync(t *testing.T) {
+func TestSkipStaleTxIndicesInSnapSync(t *testing.T) {
 	// Configure and generate a sample block chain
 	var (
 		gendb   = rawdb.NewMemoryDatabase()
@@ -2472,9 +2473,9 @@ func BenchmarkBlockChain_1x1000Executions(b *testing.B) {
 // This internally leads to a sidechain import, since the blocks trigger an
 // ErrPrunedAncestor error.
 // This may e.g. happen if
-//   1. Downloader rollbacks a batch of inserted blocks and exits
-//   2. Downloader starts to sync again
-//   3. The blocks fetched are all known and canonical blocks
+//  1. Downloader rollbacks a batch of inserted blocks and exits
+//  2. Downloader starts to sync again
+//  3. The blocks fetched are all known and canonical blocks
 func TestSideImportPrunedBlocks(t *testing.T) {
 	// Generate a canonical chain to act as the main dataset
 	engine := ethash.NewFaker()
@@ -2636,20 +2637,19 @@ func TestDeleteCreateRevert(t *testing.T) {
 
 // TestInitThenFailCreateContract tests a pretty notorious case that happened
 // on mainnet over blocks 7338108, 7338110 and 7338115.
-// - Block 7338108: address e771789f5cccac282f23bb7add5690e1f6ca467c is initiated
-//   with 0.001 ether (thus created but no code)
-// - Block 7338110: a CREATE2 is attempted. The CREATE2 would deploy code on
-//   the same address e771789f5cccac282f23bb7add5690e1f6ca467c. However, the
-//   deployment fails due to OOG during initcode execution
-// - Block 7338115: another tx checks the balance of
-//   e771789f5cccac282f23bb7add5690e1f6ca467c, and the snapshotter returned it as
-//   zero.
+//   - Block 7338108: address e771789f5cccac282f23bb7add5690e1f6ca467c is initiated
+//     with 0.001 ether (thus created but no code)
+//   - Block 7338110: a CREATE2 is attempted. The CREATE2 would deploy code on
+//     the same address e771789f5cccac282f23bb7add5690e1f6ca467c. However, the
+//     deployment fails due to OOG during initcode execution
+//   - Block 7338115: another tx checks the balance of
+//     e771789f5cccac282f23bb7add5690e1f6ca467c, and the snapshotter returned it as
+//     zero.
 //
 // The problem being that the snapshotter maintains a destructset, and adds items
 // to the destructset in case something is created "onto" an existing item.
 // We need to either roll back the snapDestructs, or not place it into snapDestructs
 // in the first place.
-//
 func TestInitThenFailCreateContract(t *testing.T) {
 	var (
 		// Generate a canonical chain to act as the main dataset
@@ -2838,13 +2838,13 @@ func TestEIP2718Transition(t *testing.T) {
 
 // TestEIP1559Transition tests the following:
 //
-// 1. A transaction whose gasFeeCap is greater than the baseFee is valid.
-// 2. Gas accounting for access lists on EIP-1559 transactions is correct.
-// 3. Only the transaction's tip will be received by the coinbase.
-// 4. The transaction sender pays for both the tip and baseFee.
-// 5. The coinbase receives only the partially realized tip when
-//    gasFeeCap - gasTipCap < baseFee.
-// 6. Legacy transaction behave as expected (e.g. gasPrice = gasFeeCap = gasTipCap).
+//  1. A transaction whose gasFeeCap is greater than the baseFee is valid.
+//  2. Gas accounting for access lists on EIP-1559 transactions is correct.
+//  3. Only the transaction's tip will be received by the coinbase.
+//  4. The transaction sender pays for both the tip and baseFee.
+//  5. The coinbase receives only the partially realized tip when
+//     gasFeeCap - gasTipCap < baseFee.
+//  6. Legacy transaction behave as expected (e.g. gasPrice = gasFeeCap = gasTipCap).
 func TestEIP1559Transition(t *testing.T) {
 	var (
 		aa = common.HexToAddress("0x000000000000000000000000000000000000aaaa")
@@ -3236,5 +3236,181 @@ func TestTransactionCountLimit(t *testing.T) {
 
 	if !errors.Is(err, consensus.ErrInvalidTxCount) {
 		t.Fatalf("error mismatch: have: %v, want: %v", err, consensus.ErrInvalidTxCount)
+	}
+}
+
+func TestBlockPayloadSizeLimit(t *testing.T) {
+	// Create config that allows at most 150 bytes per block payload
+	config := params.TestChainConfig
+	config.Scroll.MaxTxPayloadBytesPerBlock = new(int)
+	*config.Scroll.MaxTxPayloadBytesPerBlock = 150
+	config.Scroll.MaxTxPerBlock = nil
+
+	var (
+		engine  = ethash.NewFaker()
+		db      = rawdb.NewMemoryDatabase()
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{Config: config, Alloc: GenesisAlloc{address: {Balance: funds}}}
+		genesis = gspec.MustCommit(db)
+	)
+
+	addTx := func(b *BlockGen) {
+		tx := types.NewTransaction(b.TxNonce(address), address, big.NewInt(0), 50000, b.header.BaseFee, nil)
+		signed, _ := types.SignTx(tx, types.HomesteadSigner{}, key)
+		b.AddTx(signed)
+	}
+
+	// Initialize blockchain
+	blockchain, err := NewBlockChain(db, nil, config, engine, vm.Config{}, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create new chain manager: %v", err)
+	}
+	defer blockchain.Stop()
+
+	// Insert empty block
+	block1, _ := GenerateChain(config, genesis, ethash.NewFaker(), db, 1, func(i int, b *BlockGen) {
+		// empty
+	})
+
+	if _, err := blockchain.InsertChain(block1); err != nil {
+		t.Fatalf("failed to insert chain: %v", err)
+	}
+
+	// Insert block with 1 transaction
+	block2, _ := GenerateChain(config, genesis, ethash.NewFaker(), db, 1, func(i int, b *BlockGen) {
+		addTx(b)
+	})
+
+	if _, err := blockchain.InsertChain(block2); err != nil {
+		t.Fatalf("failed to insert chain: %v", err)
+	}
+
+	// Insert block with 2 transactions
+	block3, _ := GenerateChain(config, genesis, ethash.NewFaker(), db, 1, func(i int, b *BlockGen) {
+		addTx(b)
+		addTx(b)
+	})
+
+	_, err = blockchain.InsertChain(block3)
+
+	if !errors.Is(err, ErrInvalidBlockPayloadSize) {
+		t.Fatalf("error mismatch: have: %v, want: %v", err, ErrInvalidBlockPayloadSize)
+	}
+}
+
+func TestEIP3651(t *testing.T) {
+	var (
+		addraa = common.HexToAddress("0x000000000000000000000000000000000000aaaa")
+		addrbb = common.HexToAddress("0x000000000000000000000000000000000000bbbb")
+		engine = ethash.NewFaker()
+		db     = rawdb.NewMemoryDatabase()
+
+		// A sender who makes transactions, has some funds
+		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		key2, _ = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
+		addr1   = crypto.PubkeyToAddress(key1.PublicKey)
+		addr2   = crypto.PubkeyToAddress(key2.PublicKey)
+		funds   = new(big.Int).Mul(common.Big1, big.NewInt(params.Ether))
+		gspec   = &Genesis{
+			Config: params.AllEthashProtocolChanges,
+			Alloc: GenesisAlloc{
+				addr1: {Balance: funds},
+				addr2: {Balance: funds},
+				// The address 0xAAAA sloads 0x00 and 0x01
+				addraa: {
+					Code: []byte{
+						byte(vm.PC),
+						byte(vm.PC),
+						byte(vm.SLOAD),
+						byte(vm.SLOAD),
+					},
+					Nonce:   0,
+					Balance: big.NewInt(0),
+				},
+				// The address 0xBBBB calls 0xAAAA
+				addrbb: {
+					Code: []byte{
+						byte(vm.PUSH1), 0, // out size
+						byte(vm.DUP1),  // out offset
+						byte(vm.DUP1),  // out insize
+						byte(vm.DUP1),  // in offset
+						byte(vm.PUSH2), // address
+						byte(0xaa),
+						byte(0xaa),
+						byte(vm.GAS), // gas
+						byte(vm.DELEGATECALL),
+					},
+					Nonce:   0,
+					Balance: big.NewInt(0),
+				},
+			},
+		}
+		genesis = gspec.MustCommit(db)
+	)
+
+	gspec.Config.BerlinBlock = common.Big0
+	gspec.Config.LondonBlock = common.Big0
+	gspec.Config.ShanghaiBlock = common.Big0
+	signer := types.LatestSigner(gspec.Config)
+
+	blocks, _ := GenerateChain(gspec.Config, genesis, engine, db, 1, func(i int, b *BlockGen) {
+		b.SetCoinbase(addraa)
+		// One transaction to Coinbase
+		txdata := &types.DynamicFeeTx{
+			ChainID:    gspec.Config.ChainID,
+			Nonce:      0,
+			To:         &addrbb,
+			Gas:        500000,
+			GasFeeCap:  newGwei(5),
+			GasTipCap:  big.NewInt(2),
+			AccessList: nil,
+			Data:       []byte{},
+		}
+		tx := types.NewTx(txdata)
+		tx, err := types.SignTx(tx, signer, key1)
+		if err != nil {
+			t.Fatalf("failed to sign tx: %v", err)
+		}
+		b.AddTx(tx)
+	})
+	chain, err := NewBlockChain(db, nil, gspec.Config, engine, vm.Config{}, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	if n, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+	}
+
+	block := chain.GetBlockByNumber(1)
+
+	// 1+2: Ensure EIP-1559 access lists are accounted for via gas usage.
+	innerGas := vm.GasQuickStep*2 + params.ColdSloadCostEIP2929*2
+	expectedGas := params.TxGas + 5*vm.GasFastestStep + vm.GasQuickStep + 100 + innerGas // 100 because 0xaaaa is in access list
+	if block.GasUsed() != expectedGas {
+		t.Fatalf("incorrect amount of gas spent: expected %d, got %d", expectedGas, block.GasUsed())
+	}
+
+	state, err := chain.State()
+	if err != nil {
+		t.Fatalf("failed to get new state: %v", err)
+	}
+
+	// 3: Ensure that miner received only the tx's tip.
+	actual := state.GetBalance(block.Coinbase())
+	expected := new(big.Int).Add(
+		new(big.Int).SetUint64(block.GasUsed()*block.Transactions()[0].GasTipCap().Uint64()),
+		ethash.ConstantinopleBlockReward,
+	)
+	if actual.Cmp(expected) != 0 {
+		t.Fatalf("miner balance incorrect: expected %d, got %d", expected, actual)
+	}
+
+	// 4: Ensure the tx sender paid for the gasUsed * (tip + block baseFee).
+	actual = new(big.Int).Sub(funds, state.GetBalance(addr1))
+	expected = new(big.Int).SetUint64(block.GasUsed() * (block.Transactions()[0].GasTipCap().Uint64() + block.BaseFee().Uint64()))
+	if actual.Cmp(expected) != 0 {
+		t.Fatalf("sender balance incorrect: expected %d, got %d", expected, actual)
 	}
 }

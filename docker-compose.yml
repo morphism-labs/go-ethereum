@@ -1,0 +1,25 @@
+version: '3.4'
+
+volumes:
+  sequencer_geth_data:
+
+services:
+  morph-geth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: morphism-geth:latest
+    ports:
+      - "8545:8545"
+      - "8546:8546"
+      - "8551:8551"
+      - "30303:30303"
+    volumes:
+      - "sequencer_geth_data:${GETH_DATA_DIR}"
+      - "${PWD}/build/jwt-secret.txt:${JWT_SECRET_PATH}"
+      - "${PWD}/genesis_l2.json:${GENESIS_FILE_PATH}"
+    env_file:
+      - .env
+    entrypoint: # pass the L2 specific flags by overriding the entry-point and adding extra arguments
+      - "/bin/sh"
+      - "/entrypoint.sh"

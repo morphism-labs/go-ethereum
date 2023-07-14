@@ -34,6 +34,8 @@ import (
 var (
 	EmptyRootHash  = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 	EmptyUncleHash = rlpHash([]*Header(nil))
+	EmptyAddress   = common.Address{}
+	EmptyHash      = common.Hash{}
 )
 
 // A BlockNonce is a 64-bit hash which proves (combined with the
@@ -83,8 +85,15 @@ type Header struct {
 	MixDigest   common.Hash    `json:"mixHash"`
 	Nonce       BlockNonce     `json:"nonce"`
 
+	// BLSData was the field specified for morphism
+	BLSData BLSData `json:"blsData" rlp:"optional"`
+
 	// BaseFee was added by EIP-1559 and is ignored in legacy headers.
 	BaseFee *big.Int `json:"baseFeePerGas" rlp:"optional"`
+
+	// WithdrawalsHash was added by EIP-4895 and is ignored in legacy headers.
+	// Included for Ethereum compatibility in Scroll SDK
+	WithdrawalsHash *common.Hash `json:"withdrawalsRoot" rlp:"optional"`
 }
 
 // field type overrides for gencodec
@@ -102,7 +111,59 @@ type headerMarshaling struct {
 // Hash returns the block hash of the header, which is simply the keccak256 hash of its
 // RLP encoding.
 func (h *Header) Hash() common.Hash {
-	return rlpHash(h)
+	type headerNoBLS struct {
+		ParentHash  common.Hash
+		UncleHash   common.Hash
+		Coinbase    common.Address
+		Root        common.Hash
+		TxHash      common.Hash
+		ReceiptHash common.Hash
+		Bloom       Bloom
+		Difficulty  *big.Int
+		Number      *big.Int
+		GasLimit    uint64
+		GasUsed     uint64
+		Time        uint64
+		Extra       []byte
+		MixDigest   common.Hash
+		Nonce       BlockNonce
+
+		// BaseFee was added by EIP-1559 and is ignored in legacy headers.
+		BaseFee         *big.Int     `rlp:"optional"`
+		WithdrawalsHash *common.Hash `rlp:"optional"`
+	}
+	h2 := &headerNoBLS{
+		ParentHash:      h.ParentHash,
+		UncleHash:       h.UncleHash,
+		Coinbase:        h.Coinbase,
+		Root:            h.Root,
+		TxHash:          h.TxHash,
+		ReceiptHash:     h.ReceiptHash,
+		Bloom:           h.Bloom,
+		Difficulty:      h.Difficulty,
+		Number:          h.Number,
+		GasLimit:        h.GasLimit,
+		GasUsed:         h.GasUsed,
+		Time:            h.Time,
+		Extra:           h.Extra,
+		MixDigest:       h.MixDigest,
+		Nonce:           h.Nonce,
+		BaseFee:         h.BaseFee,
+		WithdrawalsHash: h.WithdrawalsHash,
+	}
+	return rlpHash(h2)
+}
+
+//go:generate go run github.com/fjl/gencodec -type BLSData -field-override blsDataMarshaling -out gen_bls.go
+
+type BLSData struct {
+	BLSSigners   [][]byte `json:"bls_signers"`
+	BLSSignature []byte   `json:"bls_signature"`
+}
+
+type blsDataMarshaling struct {
+	BLSSigners   []hexutil.Bytes
+	BLSSignature hexutil.Bytes
 }
 
 var headerSize = common.StorageSize(reflect.TypeOf(Header{}).Size())
@@ -162,8 +223,9 @@ type Block struct {
 	transactions Transactions
 
 	// caches
-	hash atomic.Value
-	size atomic.Value
+	hash       atomic.Value
+	size       atomic.Value
+	l1MsgCount atomic.Value
 
 	// Td is used by package core to store the total difficulty
 	// of the chain up to and including the block.
@@ -325,6 +387,16 @@ func (b *Block) Size() common.StorageSize {
 	return common.StorageSize(c)
 }
 
+// PayloadSize returns the sum of all transactions in a block.
+func (b *Block) PayloadSize() common.StorageSize {
+	// add up all txs sizes
+	var totalSize common.StorageSize
+	for _, tx := range b.transactions {
+		totalSize += tx.Size()
+	}
+	return totalSize
+}
+
 // SanityCheck can be used to prevent that unbounded fields are
 // stuffed with junk data to add processing overhead
 func (b *Block) SanityCheck() error {
@@ -380,6 +452,26 @@ func (b *Block) Hash() common.Hash {
 	v := b.header.Hash()
 	b.hash.Store(v)
 	return v
+}
+
+// L1MessageCount returns the number of L1 messages in this block.
+func (b *Block) L1MessageCount() int {
+	if l1MsgCount := b.l1MsgCount.Load(); l1MsgCount != nil {
+		return l1MsgCount.(int)
+	}
+	count := 0
+	for _, tx := range b.transactions {
+		if tx.IsL1MessageTx() {
+			count += 1
+		}
+	}
+	b.l1MsgCount.Store(count)
+	return count
+}
+
+// CountL2Tx returns the number of L2 transactions in this block.
+func (b *Block) CountL2Tx() int {
+	return len(b.transactions) - b.L1MessageCount()
 }
 
 type Blocks []*Block
