@@ -18,6 +18,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -602,6 +603,11 @@ func (pool *TxPool) local() map[common.Address]types.Transactions {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
+	// No unauthenticated deposits allowed in the transaction pool.
+	if tx.IsL1MessageTx() {
+		return ErrTxTypeNotSupported
+	}
+
 	// Accept only legacy transactions until EIP-2718/2930 activates.
 	if !pool.eip2718 && tx.Type() != types.LegacyTxType {
 		return ErrTxTypeNotSupported
@@ -613,6 +619,10 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	// Reject transactions over defined size to prevent DOS attacks
 	if uint64(tx.Size()) > txMaxSize {
 		return ErrOversizedData
+	}
+	// Check whether the init code size has been exceeded.
+	if pool.shanghai && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
+		return fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, len(tx.Data()), params.MaxInitCodeSize)
 	}
 	// Transactions can't be negative. This may never happen using RLP decoded
 	// transactions but may occur if you create a transaction using the RPC.
@@ -685,7 +695,7 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (replaced bool, err e
 
 	if pool.chainconfig.Scroll.FeeVaultEnabled() {
 		if err := fees.VerifyFee(pool.signer, tx, pool.currentState); err != nil {
-			log.Trace("Discarding insufficient l1fee transaction", "hash", hash, "err", err)
+			log.Trace("Discarding insufficient l1DataFee transaction", "hash", hash, "err", err)
 			invalidTxMeter.Mark(1)
 			return false, err
 		}

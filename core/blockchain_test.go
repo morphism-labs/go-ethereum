@@ -1747,8 +1747,8 @@ func TestInsertReceiptChainRollback(t *testing.T) {
 // overtake the 'canon' chain until after it's passed canon by about 200 blocks.
 //
 // Details at:
-//  - https://github.com/scroll-tech/go-ethereum/issues/18977
-//  - https://github.com/scroll-tech/go-ethereum/pull/18988
+//   - https://github.com/scroll-tech/go-ethereum/issues/18977
+//   - https://github.com/scroll-tech/go-ethereum/pull/18988
 func TestLowDiffLongChain(t *testing.T) {
 	// Generate a canonical chain to act as the main dataset
 	engine := ethash.NewFaker()
@@ -1867,7 +1867,8 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 // That is: the sidechain for import contains some blocks already present in canon chain.
 // So the blocks are
 // [ Cn, Cn+1, Cc, Sn+3 ... Sm]
-//   ^    ^    ^  pruned
+//
+//	^    ^    ^  pruned
 func TestPrunedImportSide(t *testing.T) {
 	//glogger := log.NewGlogHandler(log.StreamHandler(os.Stdout, log.TerminalFormat(false)))
 	//glogger.Verbosity(3)
@@ -2272,7 +2273,7 @@ func TestTransactionIndices(t *testing.T) {
 	}
 }
 
-func TestSkipStaleTxIndicesInFastSync(t *testing.T) {
+func TestSkipStaleTxIndicesInSnapSync(t *testing.T) {
 	// Configure and generate a sample block chain
 	var (
 		gendb   = rawdb.NewMemoryDatabase()
@@ -2472,9 +2473,9 @@ func BenchmarkBlockChain_1x1000Executions(b *testing.B) {
 // This internally leads to a sidechain import, since the blocks trigger an
 // ErrPrunedAncestor error.
 // This may e.g. happen if
-//   1. Downloader rollbacks a batch of inserted blocks and exits
-//   2. Downloader starts to sync again
-//   3. The blocks fetched are all known and canonical blocks
+//  1. Downloader rollbacks a batch of inserted blocks and exits
+//  2. Downloader starts to sync again
+//  3. The blocks fetched are all known and canonical blocks
 func TestSideImportPrunedBlocks(t *testing.T) {
 	// Generate a canonical chain to act as the main dataset
 	engine := ethash.NewFaker()
@@ -2636,20 +2637,19 @@ func TestDeleteCreateRevert(t *testing.T) {
 
 // TestInitThenFailCreateContract tests a pretty notorious case that happened
 // on mainnet over blocks 7338108, 7338110 and 7338115.
-// - Block 7338108: address e771789f5cccac282f23bb7add5690e1f6ca467c is initiated
-//   with 0.001 ether (thus created but no code)
-// - Block 7338110: a CREATE2 is attempted. The CREATE2 would deploy code on
-//   the same address e771789f5cccac282f23bb7add5690e1f6ca467c. However, the
-//   deployment fails due to OOG during initcode execution
-// - Block 7338115: another tx checks the balance of
-//   e771789f5cccac282f23bb7add5690e1f6ca467c, and the snapshotter returned it as
-//   zero.
+//   - Block 7338108: address e771789f5cccac282f23bb7add5690e1f6ca467c is initiated
+//     with 0.001 ether (thus created but no code)
+//   - Block 7338110: a CREATE2 is attempted. The CREATE2 would deploy code on
+//     the same address e771789f5cccac282f23bb7add5690e1f6ca467c. However, the
+//     deployment fails due to OOG during initcode execution
+//   - Block 7338115: another tx checks the balance of
+//     e771789f5cccac282f23bb7add5690e1f6ca467c, and the snapshotter returned it as
+//     zero.
 //
 // The problem being that the snapshotter maintains a destructset, and adds items
 // to the destructset in case something is created "onto" an existing item.
 // We need to either roll back the snapDestructs, or not place it into snapDestructs
 // in the first place.
-//
 func TestInitThenFailCreateContract(t *testing.T) {
 	var (
 		// Generate a canonical chain to act as the main dataset
@@ -2838,13 +2838,13 @@ func TestEIP2718Transition(t *testing.T) {
 
 // TestEIP1559Transition tests the following:
 //
-// 1. A transaction whose gasFeeCap is greater than the baseFee is valid.
-// 2. Gas accounting for access lists on EIP-1559 transactions is correct.
-// 3. Only the transaction's tip will be received by the coinbase.
-// 4. The transaction sender pays for both the tip and baseFee.
-// 5. The coinbase receives only the partially realized tip when
-//    gasFeeCap - gasTipCap < baseFee.
-// 6. Legacy transaction behave as expected (e.g. gasPrice = gasFeeCap = gasTipCap).
+//  1. A transaction whose gasFeeCap is greater than the baseFee is valid.
+//  2. Gas accounting for access lists on EIP-1559 transactions is correct.
+//  3. Only the transaction's tip will be received by the coinbase.
+//  4. The transaction sender pays for both the tip and baseFee.
+//  5. The coinbase receives only the partially realized tip when
+//     gasFeeCap - gasTipCap < baseFee.
+//  6. Legacy transaction behave as expected (e.g. gasPrice = gasFeeCap = gasTipCap).
 func TestEIP1559Transition(t *testing.T) {
 	var (
 		aa = common.HexToAddress("0x000000000000000000000000000000000000aaaa")
@@ -3236,6 +3236,67 @@ func TestTransactionCountLimit(t *testing.T) {
 
 	if !errors.Is(err, consensus.ErrInvalidTxCount) {
 		t.Fatalf("error mismatch: have: %v, want: %v", err, consensus.ErrInvalidTxCount)
+	}
+}
+
+func TestBlockPayloadSizeLimit(t *testing.T) {
+	// Create config that allows at most 150 bytes per block payload
+	config := params.TestChainConfig
+	config.Scroll.MaxTxPayloadBytesPerBlock = new(int)
+	*config.Scroll.MaxTxPayloadBytesPerBlock = 150
+	config.Scroll.MaxTxPerBlock = nil
+
+	var (
+		engine  = ethash.NewFaker()
+		db      = rawdb.NewMemoryDatabase()
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{Config: config, Alloc: GenesisAlloc{address: {Balance: funds}}}
+		genesis = gspec.MustCommit(db)
+	)
+
+	addTx := func(b *BlockGen) {
+		tx := types.NewTransaction(b.TxNonce(address), address, big.NewInt(0), 50000, b.header.BaseFee, nil)
+		signed, _ := types.SignTx(tx, types.HomesteadSigner{}, key)
+		b.AddTx(signed)
+	}
+
+	// Initialize blockchain
+	blockchain, err := NewBlockChain(db, nil, config, engine, vm.Config{}, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create new chain manager: %v", err)
+	}
+	defer blockchain.Stop()
+
+	// Insert empty block
+	block1, _ := GenerateChain(config, genesis, ethash.NewFaker(), db, 1, func(i int, b *BlockGen) {
+		// empty
+	})
+
+	if _, err := blockchain.InsertChain(block1); err != nil {
+		t.Fatalf("failed to insert chain: %v", err)
+	}
+
+	// Insert block with 1 transaction
+	block2, _ := GenerateChain(config, genesis, ethash.NewFaker(), db, 1, func(i int, b *BlockGen) {
+		addTx(b)
+	})
+
+	if _, err := blockchain.InsertChain(block2); err != nil {
+		t.Fatalf("failed to insert chain: %v", err)
+	}
+
+	// Insert block with 2 transactions
+	block3, _ := GenerateChain(config, genesis, ethash.NewFaker(), db, 1, func(i int, b *BlockGen) {
+		addTx(b)
+		addTx(b)
+	})
+
+	_, err = blockchain.InsertChain(block3)
+
+	if !errors.Is(err, ErrInvalidBlockPayloadSize) {
+		t.Fatalf("error mismatch: have: %v, want: %v", err, ErrInvalidBlockPayloadSize)
 	}
 }
 

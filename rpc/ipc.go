@@ -54,3 +54,13 @@ func DialIPC(ctx context.Context, endpoint string) (*Client, error) {
 		return NewCodec(conn), err
 	})
 }
+
+func newClientTransportIPC(endpoint string) reconnectFunc {
+	return func(ctx context.Context) (ServerCodec, error) {
+		conn, err := newIPCConnection(ctx, endpoint)
+		if err != nil {
+			return nil, err
+		}
+		return NewCodec(conn), err
+	}
+}

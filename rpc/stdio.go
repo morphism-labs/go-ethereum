@@ -40,6 +40,15 @@ func DialIO(ctx context.Context, in io.Reader, out io.Writer) (*Client, error) {
 	})
 }
 
+func newClientTransportIO(in io.Reader, out io.Writer) reconnectFunc {
+	return func(context.Context) (ServerCodec, error) {
+		return NewCodec(stdioConn{
+			in:  in,
+			out: out,
+		}), nil
+	}
+}
+
 type stdioConn struct {
 	in  io.Reader
 	out io.Writer

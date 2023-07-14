@@ -16,6 +16,7 @@ import (
 	"github.com/scroll-tech/go-ethereum/core/vm"
 	"github.com/scroll-tech/go-ethereum/log"
 	"github.com/scroll-tech/go-ethereum/params"
+	"github.com/scroll-tech/go-ethereum/rollup/fees"
 	"github.com/scroll-tech/go-ethereum/rollup/rcfg"
 	"github.com/scroll-tech/go-ethereum/rollup/withdrawtrie"
 	"github.com/scroll-tech/go-ethereum/rpc"
@@ -182,7 +183,12 @@ func (api *API) getBlockTrace(block *types.Block, env *traceEnv) (*types.BlockTr
 		msg, _ := tx.AsMessage(env.signer, block.BaseFee())
 		env.state.Prepare(tx.Hash(), i)
 		vmenv := vm.NewEVM(env.blockCtx, core.NewEVMTxContext(msg), env.state, api.backend.ChainConfig(), vm.Config{})
-		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas())); err != nil {
+		l1DataFee, err := fees.CalculateL1DataFee(tx, env.state)
+		if err != nil {
+			failed = err
+			break
+		}
+		if _, err = core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()), l1DataFee); err != nil {
 			failed = err
 			break
 		}
@@ -258,7 +264,11 @@ func (api *API) getTxResult(env *traceEnv, state *state.StateDB, index int, bloc
 	state.Prepare(txctx.TxHash, txctx.TxIndex)
 
 	// Computes the new state by applying the given message.
-	result, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()))
+	l1DataFee, err := fees.CalculateL1DataFee(tx, state)
+	if err != nil {
+		return fmt.Errorf("tracing failed: %w", err)
+	}
+	result, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()), l1DataFee)
 	if err != nil {
 		return fmt.Errorf("tracing failed: %w", err)
 	}
@@ -345,7 +355,7 @@ func (api *API) getTxResult(env *traceEnv, state *state.StateDB, index int, bloc
 				m = make(map[string][]hexutil.Bytes)
 				env.StorageProofs[addrStr] = m
 				if zktrieTracer.Available() {
-					env.zkTrieTracer[addrStr] = zktrieTracer
+					env.zkTrieTracer[addrStr] = state.NewProofTracer(trie)
 				}
 			} else if _, existed := m[keyStr]; existed {
 				// still need to touch tracer for deletion
@@ -384,16 +394,12 @@ func (api *API) getTxResult(env *traceEnv, state *state.StateDB, index int, bloc
 		}
 	}
 
-	var l1Fee uint64
-	if result.L1Fee != nil {
-		l1Fee = result.L1Fee.Uint64()
-	}
 	env.executionResults[index] = &types.ExecutionResult{
 		From:           sender,
 		To:             receiver,
 		AccountCreated: createdAcc,
 		AccountsAfter:  after,
-		L1Fee:          l1Fee,
+		L1DataFee:      (*hexutil.Big)(result.L1DataFee),
 		Gas:            result.UsedGas,
 		Failed:         result.Failed(),
 		ReturnValue:    fmt.Sprintf("%x", returnVal),

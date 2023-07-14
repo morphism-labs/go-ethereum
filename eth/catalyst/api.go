@@ -277,17 +277,17 @@ func insertBlockParamsToBlock(config *chainParams.ChainConfig, parent *types.Hea
 // NewBlock creates an Eth1 block, inserts it in the chain, and either returns true,
 // or false + an error. This is a bit redundant for go, but simplifies things on the
 // eth2 side.
-func (api *consensusAPI) NewBlock(params executableData) (*newBlockResponse, error) {
+func (api *consensusAPI) NewBlock(params executableData) (*NewBlockResponse, error) {
 	parent := api.eth.BlockChain().GetBlockByHash(params.ParentHash)
 	if parent == nil {
-		return &newBlockResponse{false}, fmt.Errorf("could not find parent %x", params.ParentHash)
+		return &NewBlockResponse{false}, fmt.Errorf("could not find parent %x", params.ParentHash)
 	}
 	block, err := insertBlockParamsToBlock(api.eth.BlockChain().Config(), parent.Header(), params)
 	if err != nil {
 		return nil, err
 	}
 	_, err = api.eth.BlockChain().InsertChainWithoutSealVerification(block)
-	return &newBlockResponse{err == nil}, err
+	return &NewBlockResponse{err == nil}, err
 }
 
 // Used in tests to add a the list of transactions from a block to the tx pool.
@@ -300,11 +300,11 @@ func (api *consensusAPI) addBlockTxs(block *types.Block) error {
 
 // FinalizeBlock is called to mark a block as synchronized, so
 // that data that is no longer needed can be removed.
-func (api *consensusAPI) FinalizeBlock(blockHash common.Hash) (*genericResponse, error) {
-	return &genericResponse{true}, nil
+func (api *consensusAPI) FinalizeBlock(blockHash common.Hash) (*GenericResponse, error) {
+	return &GenericResponse{true}, nil
 }
 
 // SetHead is called to perform a force choice.
-func (api *consensusAPI) SetHead(newHead common.Hash) (*genericResponse, error) {
-	return &genericResponse{true}, nil
+func (api *consensusAPI) SetHead(newHead common.Hash) (*GenericResponse, error) {
+	return &GenericResponse{true}, nil
 }

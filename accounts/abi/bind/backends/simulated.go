@@ -30,6 +30,7 @@ import (
 	"github.com/scroll-tech/go-ethereum/common"
 	"github.com/scroll-tech/go-ethereum/common/hexutil"
 	"github.com/scroll-tech/go-ethereum/common/math"
+	"github.com/scroll-tech/go-ethereum/consensus"
 	"github.com/scroll-tech/go-ethereum/consensus/ethash"
 	"github.com/scroll-tech/go-ethereum/core"
 	"github.com/scroll-tech/go-ethereum/core/bloombits"
@@ -42,6 +43,7 @@ import (
 	"github.com/scroll-tech/go-ethereum/event"
 	"github.com/scroll-tech/go-ethereum/log"
 	"github.com/scroll-tech/go-ethereum/params"
+	"github.com/scroll-tech/go-ethereum/rollup/fees"
 	"github.com/scroll-tech/go-ethereum/rpc"
 )
 
@@ -62,6 +64,8 @@ var (
 type SimulatedBackend struct {
 	database   ethdb.Database   // In memory database to store our testing data
 	blockchain *core.BlockChain // Ethereum blockchain to handle the consensus
+
+	consensus consensus.Engine
 
 	mu           sync.Mutex
 	pendingBlock *types.Block   // Currently pending block that will be imported on request
@@ -95,6 +99,87 @@ func NewSimulatedBackendWithDatabase(database ethdb.Database, alloc core.Genesis
 // A simulated backend always uses chainID 1337.
 func NewSimulatedBackend(alloc core.GenesisAlloc, gasLimit uint64) *SimulatedBackend {
 	return NewSimulatedBackendWithDatabase(rawdb.NewMemoryDatabase(), alloc, gasLimit)
+}
+
+type simulatedBackendConfig struct {
+	genesis     core.Genesis
+	cacheConfig *core.CacheConfig
+	database    ethdb.Database
+	vmConfig    vm.Config
+	consensus   consensus.Engine
+}
+
+type SimulatedBackendOpt func(s *simulatedBackendConfig)
+
+func WithDatabase(database ethdb.Database) SimulatedBackendOpt {
+	return func(s *simulatedBackendConfig) {
+		s.database = database
+	}
+}
+
+func WithGasLimit(gasLimit uint64) SimulatedBackendOpt {
+	return func(s *simulatedBackendConfig) {
+		s.genesis.GasLimit = gasLimit
+	}
+}
+
+func WithAlloc(alloc core.GenesisAlloc) SimulatedBackendOpt {
+	return func(s *simulatedBackendConfig) {
+		s.genesis.Alloc = alloc
+	}
+}
+
+func WithCacheConfig(cacheConfig *core.CacheConfig) SimulatedBackendOpt {
+	return func(s *simulatedBackendConfig) {
+		s.cacheConfig = cacheConfig
+	}
+}
+
+func WithGenesis(genesis core.Genesis) SimulatedBackendOpt {
+	return func(s *simulatedBackendConfig) {
+		s.genesis = genesis
+	}
+}
+
+func WithVMConfig(vmConfig vm.Config) SimulatedBackendOpt {
+	return func(s *simulatedBackendConfig) {
+		s.vmConfig = vmConfig
+	}
+}
+
+func WithConsensus(consensus consensus.Engine) SimulatedBackendOpt {
+	return func(s *simulatedBackendConfig) {
+		s.consensus = consensus
+	}
+}
+
+// NewSimulatedBackendWithOpts creates a new binding backend based on the given database
+// and uses a simulated blockchain for testing purposes. It exposes additional configuration
+// options that are useful to
+func NewSimulatedBackendWithOpts(opts ...SimulatedBackendOpt) *SimulatedBackend {
+	config := &simulatedBackendConfig{
+		genesis:   core.Genesis{Config: params.AllEthashProtocolChanges, GasLimit: 100000000, Alloc: make(core.GenesisAlloc)},
+		database:  rawdb.NewMemoryDatabase(),
+		consensus: ethash.NewFaker(),
+	}
+
+	for _, opt := range opts {
+		opt(config)
+	}
+
+	config.genesis.MustCommit(config.database)
+	blockchain, _ := core.NewBlockChain(config.database, config.cacheConfig, config.genesis.Config, config.consensus, config.vmConfig, nil, nil)
+
+	backend := &SimulatedBackend{
+		database:   config.database,
+		blockchain: blockchain,
+		config:     config.genesis.Config,
+		consensus:  config.consensus,
+		events:     filters.NewEventSystem(&filterBackend{config.database, blockchain}, false),
+	}
+
+	backend.rollback(blockchain.CurrentBlock())
+	return backend
 }
 
 // Close terminates the underlying blockchain's update loop.
@@ -638,8 +723,13 @@ func (b *SimulatedBackend) callContract(ctx context.Context, call ethereum.CallM
 	// about the transaction and calling mechanisms.
 	vmEnv := vm.NewEVM(evmContext, txContext, stateDB, b.config, vm.Config{NoBaseFee: true})
 	gasPool := new(core.GasPool).AddGas(math.MaxUint64)
+	signer := types.MakeSigner(b.blockchain.Config(), head.Number)
+	l1DataFee, err := fees.EstimateL1DataFeeForMessage(msg, head.BaseFee, b.blockchain.Config().ChainID, signer, stateDB)
+	if err != nil {
+		return nil, err
+	}
 
-	return core.NewStateTransition(vmEnv, msg, gasPool).TransitionDb()
+	return core.NewStateTransition(vmEnv, msg, gasPool, l1DataFee).TransitionDb()
 }
 
 // SendTransaction updates the pending block to include the given transaction.
@@ -814,6 +904,7 @@ func (m callMsg) Gas() uint64                  { return m.CallMsg.Gas }
 func (m callMsg) Value() *big.Int              { return m.CallMsg.Value }
 func (m callMsg) Data() []byte                 { return m.CallMsg.Data }
 func (m callMsg) AccessList() types.AccessList { return m.CallMsg.AccessList }
+func (m callMsg) IsL1MessageTx() bool          { return false }
 
 // filterBackend implements filters.Backend to support filtering for logs without
 // taking bloom-bits acceleration structures into account.

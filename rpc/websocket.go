@@ -222,6 +222,44 @@ func DialWebsocket(ctx context.Context, endpoint, origin string) (*Client, error
 	return DialWebsocketWithDialer(ctx, endpoint, origin, dialer)
 }
 
+func newClientTransportWS(endpoint string, cfg *clientConfig) (reconnectFunc, error) {
+	dialer := cfg.wsDialer
+	if dialer == nil {
+		dialer = &websocket.Dialer{
+			ReadBufferSize:  wsReadBuffer,
+			WriteBufferSize: wsWriteBuffer,
+			WriteBufferPool: wsBufferPool,
+		}
+	}
+
+	dialURL, header, err := wsClientHeaders(endpoint, "")
+	if err != nil {
+		return nil, err
+	}
+	for key, values := range cfg.httpHeaders {
+		header[key] = values
+	}
+
+	connect := func(ctx context.Context) (ServerCodec, error) {
+		header := header.Clone()
+		if cfg.httpAuth != nil {
+			if err := cfg.httpAuth(header); err != nil {
+				return nil, err
+			}
+		}
+		conn, resp, err := dialer.DialContext(ctx, dialURL, header)
+		if err != nil {
+			hErr := wsHandshakeError{err: err}
+			if resp != nil {
+				hErr.status = resp.Status
+			}
+			return nil, hErr
+		}
+		return newWebsocketCodec(conn), nil
+	}
+	return connect, nil
+}
+
 func wsClientHeaders(endpoint, origin string) (string, http.Header, error) {
 	endpointURL, err := url.Parse(endpoint)
 	if err != nil {
@@ -258,6 +296,7 @@ func newWebsocketCodec(conn *websocket.Conn) ServerCodec {
 		conn:      conn,
 		pingReset: make(chan struct{}, 1),
 	}
+	// Fill in connection details.
 	wc.wg.Add(1)
 	go wc.pingLoop()
 	return wc

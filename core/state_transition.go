@@ -28,7 +28,6 @@ import (
 	"github.com/scroll-tech/go-ethereum/crypto/codehash"
 	"github.com/scroll-tech/go-ethereum/log"
 	"github.com/scroll-tech/go-ethereum/params"
-	"github.com/scroll-tech/go-ethereum/rollup/fees"
 )
 
 var emptyKeccakCodeHash = codehash.EmptyKeccakCodeHash
@@ -44,8 +43,10 @@ The state transitioning model does all the necessary work to work out a valid ne
 3) Create a new state object if the recipient is \0*32
 4) Value transfer
 == If contract creation ==
-  4a) Attempt to run transaction data
-  4b) If valid, use result as code for the new state object
+
+	4a) Attempt to run transaction data
+	4b) If valid, use result as code for the new state object
+
 == end ==
 5) Run Script section
 6) Derive new state root
@@ -63,8 +64,7 @@ type StateTransition struct {
 	state      vm.StateDB
 	evm        *vm.EVM
 
-	// l1 rollup fee
-	l1Fee *big.Int
+	l1DataFee *big.Int
 }
 
 // Message represents a message sent to a contract.
@@ -82,12 +82,13 @@ type Message interface {
 	IsFake() bool
 	Data() []byte
 	AccessList() types.AccessList
+	IsL1MessageTx() bool
 }
 
 // ExecutionResult includes all output after executing given evm
 // message no matter the execution itself is successful or not.
 type ExecutionResult struct {
-	L1Fee      *big.Int
+	L1DataFee  *big.Int
 	UsedGas    uint64 // Total used gas but include the refunded gas
 	Err        error  // Any error encountered during the execution(listed in core/vm/errors.go)
 	ReturnData []byte // Returned data from evm(function result or data supplied with revert opcode)
@@ -180,12 +181,7 @@ func toWordSize(size uint64) uint64 {
 }
 
 // NewStateTransition initialises and returns a new state transition object.
-func NewStateTransition(evm *vm.EVM, msg Message, gp *GasPool) *StateTransition {
-	l1Fee := new(big.Int)
-	if evm.ChainConfig().Scroll.FeeVaultEnabled() {
-		l1Fee, _ = fees.CalculateL1MsgFee(msg, evm.StateDB)
-	}
-
+func NewStateTransition(evm *vm.EVM, msg Message, gp *GasPool, l1DataFee *big.Int) *StateTransition {
 	return &StateTransition{
 		gp:        gp,
 		evm:       evm,
@@ -196,7 +192,7 @@ func NewStateTransition(evm *vm.EVM, msg Message, gp *GasPool) *StateTransition 
 		value:     msg.Value(),
 		data:      msg.Data(),
 		state:     evm.StateDB,
-		l1Fee:     l1Fee,
+		l1DataFee: l1DataFee,
 	}
 }
 
@@ -207,8 +203,8 @@ func NewStateTransition(evm *vm.EVM, msg Message, gp *GasPool) *StateTransition 
 // the gas used (which includes gas refunds) and an error if it failed. An error always
 // indicates a core error meaning that the message would always fail for that particular
 // state and would never be accepted within a block.
-func ApplyMessage(evm *vm.EVM, msg Message, gp *GasPool) (*ExecutionResult, error) {
-	return NewStateTransition(evm, msg, gp).TransitionDb()
+func ApplyMessage(evm *vm.EVM, msg Message, gp *GasPool, l1DataFee *big.Int) (*ExecutionResult, error) {
+	return NewStateTransition(evm, msg, gp, l1DataFee).TransitionDb()
 }
 
 // to returns the recipient of the message.
@@ -224,9 +220,12 @@ func (st *StateTransition) buyGas() error {
 	mgval = mgval.Mul(mgval, st.gasPrice)
 
 	if st.evm.ChainConfig().Scroll.FeeVaultEnabled() {
-		// always add l1fee, because all tx are L2-to-L1 ATM
-		log.Debug("Adding L1 fee", "l1_fee", st.l1Fee)
-		mgval = mgval.Add(mgval, st.l1Fee)
+		// should be fine to add st.l1DataFee even without `L1MessageTx` check, since L1MessageTx will come with 0 l1DataFee,
+		// but double check to make sure
+		if !st.msg.IsL1MessageTx() {
+			log.Debug("Adding L1DataFee", "l1DataFee", st.l1DataFee)
+			mgval = mgval.Add(mgval, st.l1DataFee)
+		}
 	}
 
 	balanceCheck := mgval
@@ -235,8 +234,11 @@ func (st *StateTransition) buyGas() error {
 		balanceCheck = balanceCheck.Mul(balanceCheck, st.gasFeeCap)
 		balanceCheck.Add(balanceCheck, st.value)
 		if st.evm.ChainConfig().Scroll.FeeVaultEnabled() {
-			// always add l1fee, because all tx are L2-to-L1 ATM
-			balanceCheck.Add(balanceCheck, st.l1Fee)
+			// should be fine to add st.l1DataFee even without `L1MessageTx` check, since L1MessageTx will come with 0 l1DataFee,
+			// but double check to make sure
+			if !st.msg.IsL1MessageTx() {
+				balanceCheck.Add(balanceCheck, st.l1DataFee)
+			}
 		}
 	}
 	if have, want := st.state.GetBalance(st.msg.From()), balanceCheck; have.Cmp(want) < 0 {
@@ -253,6 +255,14 @@ func (st *StateTransition) buyGas() error {
 }
 
 func (st *StateTransition) preCheck() error {
+	if st.msg.IsL1MessageTx() {
+		// No fee fields to check, no nonce to check, and no need to check if EOA (L1 already verified it for us)
+		// Gas is free, but no refunds!
+		st.gas += st.msg.Gas()
+		st.initialGas = st.msg.Gas()
+		return st.gp.SubGas(st.msg.Gas()) // gas used by deposits may not be used by other txs
+	}
+
 	// Only check transactions that are not fake
 	if !st.msg.IsFake() {
 		// Make sure this transaction's nonce is correct.
@@ -307,13 +317,13 @@ func (st *StateTransition) preCheck() error {
 // TransitionDb will transition the state by applying the current message and
 // returning the evm execution result with following fields.
 //
-// - used gas:
-//      total gas used (including gas being refunded)
-// - returndata:
-//      the returned data from evm
-// - concrete execution error:
-//      various **EVM** error which aborts the execution,
-//      e.g. ErrOutOfGas, ErrExecutionReverted
+//   - used gas:
+//     total gas used (including gas being refunded)
+//   - returndata:
+//     the returned data from evm
+//   - concrete execution error:
+//     various **EVM** error which aborts the execution,
+//     e.g. ErrOutOfGas, ErrExecutionReverted
 //
 // However if any consensus issue encountered, return the error directly with
 // nil evm execution result.
@@ -379,6 +389,16 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 		ret, st.gas, vmerr = st.evm.Call(sender, st.to(), st.data, st.gas, st.value)
 	}
 
+	// no refunds for l1 messages
+	if st.msg.IsL1MessageTx() {
+		return &ExecutionResult{
+			L1DataFee:  big.NewInt(0),
+			UsedGas:    st.gasUsed(),
+			Err:        vmerr,
+			ReturnData: ret,
+		}, nil
+	}
+
 	if !london {
 		// Before EIP-3529: refunds were capped to gasUsed / 2
 		st.refundGas(params.RefundQuotient)
@@ -397,17 +417,17 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 
 	if st.evm.ChainConfig().Scroll.FeeVaultEnabled() {
 		// The L2 Fee is the same as the fee that is charged in the normal geth
-		// codepath. Add the L1 fee to the L2 fee for the total fee that is sent
+		// codepath. Add the L1DataFee to the L2 fee for the total fee that is sent
 		// to the sequencer.
 		l2Fee := new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip)
-		fee := new(big.Int).Add(st.l1Fee, l2Fee)
+		fee := new(big.Int).Add(st.l1DataFee, l2Fee)
 		st.state.AddBalance(st.evm.FeeRecipient(), fee)
 	} else {
 		st.state.AddBalance(st.evm.FeeRecipient(), new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip))
 	}
 
 	return &ExecutionResult{
-		L1Fee:      st.l1Fee,
+		L1DataFee:  st.l1DataFee,
 		UsedGas:    st.gasUsed(),
 		Err:        vmerr,
 		ReturnData: ret,

@@ -1,8 +1,3 @@
-# Support setting various labels on the final image
-ARG COMMIT=""
-ARG VERSION=""
-ARG BUILDNUM=""
-
 # Build Geth in a stock Go builder container
 FROM golang:1.18-alpine as builder
 
@@ -16,13 +11,11 @@ FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /go-ethereum/build/bin/geth /usr/local/bin/
+COPY entrypoint.sh /entrypoint.sh
 
-EXPOSE 8545 8546 30303 30303/udp
-ENTRYPOINT ["geth"]
+VOLUME ["/db"]
 
-# Add some metadata labels to help programatic image consumption
-ARG COMMIT=""
-ARG VERSION=""
-ARG BUILDNUM=""
+ENTRYPOINT ["/bin/sh", "/entrypoint.sh"]
 
-LABEL commit="$COMMIT" version="$VERSION" buildnum="$BUILDNUM"
+EXPOSE 8545 8546 8551 30303 30303/udp
+

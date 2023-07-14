@@ -24,6 +24,7 @@ import (
 	"golang.org/x/crypto/sha3"
 
 	"github.com/scroll-tech/go-ethereum/common"
+	"github.com/scroll-tech/go-ethereum/rollup/rcfg"
 )
 
 // Genesis hashes to enforce below configs on.
@@ -255,7 +256,6 @@ var (
 	}
 
 	// ScrollAlphaChainConfig contains the chain parameters to run a node on the Scroll Alpha test network.
-	ScrollFeeVaultAddress           = common.HexToAddress("0x5300000000000000000000000000000000000005")
 	ScrollMaxTxPerBlock             = 44
 	ScrollMaxTxPayloadBytesPerBlock = 120 * 1024
 
@@ -275,7 +275,7 @@ var (
 		BerlinBlock:         big.NewInt(0),
 		LondonBlock:         big.NewInt(0),
 		ArrowGlacierBlock:   nil,
-		ArchimedesBlock:     big.NewInt(2444711),
+		ArchimedesBlock:     big.NewInt(2646311),
 		ShanghaiBlock:       nil,
 		Clique: &CliqueConfig{
 			Period: 3,
@@ -285,7 +285,7 @@ var (
 			UseZktrie:                 true,
 			MaxTxPerBlock:             &ScrollMaxTxPerBlock,
 			MaxTxPayloadBytesPerBlock: &ScrollMaxTxPayloadBytesPerBlock,
-			FeeVaultAddress:           &ScrollFeeVaultAddress,
+			FeeVaultAddress:           &rcfg.ScrollFeeVaultAddress,
 			EnableEIP2718:             false,
 			EnableEIP1559:             false,
 		},
@@ -477,12 +477,13 @@ func (s ScrollConfig) String() string {
 		maxTxPayloadBytesPerBlock = fmt.Sprintf("%v", *s.MaxTxPayloadBytesPerBlock)
 	}
 
-	return fmt.Sprintf("{useZktrie: %v, maxTxPerBlock: %v, MaxTxPayloadBytesPerBlock: %v, feeVaultAddress: %v, enableEIP2718:%v, enableEIP1559:%v}",
+	return fmt.Sprintf("{useZktrie: %v, maxTxPerBlock: %v, MaxTxPayloadBytesPerBlock: %v, feeVaultAddress: %v, enableEIP2718: %v, enableEIP1559: %v}",
 		s.UseZktrie, maxTxPerBlock, maxTxPayloadBytesPerBlock, s.FeeVaultAddress, s.EnableEIP2718, s.EnableEIP1559)
 }
 
-// IsValidTxCount returns whether the given block's transaction count is below the limit.
-func (s ScrollConfig) IsValidTxCount(count int) bool {
+// IsValidL2TxCount returns whether the given block's L2 transaction count is below the limit.
+// This limit corresponds to the number of ECDSA signature checks that we can fit into the zkEVM.
+func (s ScrollConfig) IsValidL2TxCount(count int) bool {
 	return s.MaxTxPerBlock == nil || count <= *s.MaxTxPerBlock
 }
 
